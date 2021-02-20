@@ -1,39 +1,56 @@
 version: 2
+defaults: &defaults
+  macos:
+    xcode: 11.0.0
+  parallelism: 1
+  shell: /bin/bash --login    
+  environment:
+    CIRCLE_ARTIFACTS: /tmp/circleci-artifacts
+    CIRCLE_TEST_REPORTS: /tmp/circleci-test-results
+    LANG: en_US.UTF-8
+    BUNDLE_PATH: vendor/bundle
 jobs:
-  build:
-    working_directory: ~/Moya/Moya
-    parallelism: 1
-    shell: /bin/bash --login
-    environment:
-      CIRCLE_ARTIFACTS: /tmp/circleci-artifacts
-      CIRCLE_TEST_REPORTS: /tmp/circleci-test-results
-      LANG: en_US.UTF-8
-      BUNDLE_PATH: vendor/bundle
-    macos:
-      xcode: '9.2.0'
+  carthage_without_swiftlint_integration:
+    <<: *defaults
+    working_directory: ~/Moya/Moya_Carthage_1
     steps:
       - checkout
       - run: mkdir -p $CIRCLE_ARTIFACTS $CIRCLE_TEST_REPORTS
       - restore_cache:
           keys:
-            - v1-dep-{{ .Branch }}-
-            - v1-dep-master-
-            - v1-dep-
+            - v{{ .Environment.CACHE_VERSION }}-carthage-no-swiftlint-deps-{{ checksum "Cartfile.resolved" }}
       - run:
           name: Set Ruby Version
           command: echo "ruby-2.4" > ~/.ruby-version
-      - run: 
-          name: Fetch CocoaPods Specs
-          command: curl -sS https://cocoapods-specs.circleci.com/fetch-cocoapods-repo-from-s3.sh | bash
       - run:
-          name: Update Homebrew
-          command: brew update
+          name: Carthage checkout
+          command: carthage checkout
       - run:
           name: Test Carthage Build before installing SwiftLint
-          command: carthage build --no-skip-current --cache-builds
+          command: carthage build --no-skip-current --cache-builds --no-use-binaries --verbose             
+      - save_cache:
+          key: v{{ .Environment.CACHE_VERSION }}-carthage-no-swiftlint-deps-{{ checksum "Cartfile.resolved" }}
+          paths:
+            - Carthage               
+  build:
+    <<: *defaults
+    working_directory: ~/Moya/Moya
+    steps:
+      - checkout
+      - run: mkdir -p $CIRCLE_ARTIFACTS $CIRCLE_TEST_REPORTS
+      - restore_cache:
+          keys:
+            - v{{ .Environment.CACHE_VERSION }}-{{ .Branch }}-dep-{{ checksum "Cartfile.resolved" }}
+            - v{{ .Environment.CACHE_VERSION }}-{{ .Branch }}-dep-{{ checksum "Dangerfile.swift" }}
+      - run:
+          name: Set Ruby Version
+          command: echo "ruby-2.4" > ~/.ruby-version
       - run:
           name: Install Swiftlint
-          command: brew install swiftlint
+          command: git clone git@github.com:realm/SwiftLint.git && cd SwiftLint && git submodule update --init --recursive && make install && cd ../
+      - run:
+          name: Add Python directory to PATH
+          command: echo 'export PATH=~/Library/Python/2.7/bin:$PATH' >> $BASH_ENV        
       - run:
           name: Install Ruby Dependencies
           command: bundle check || bundle install
@@ -44,7 +61,7 @@ jobs:
           name: Bootstrap Carthage
           command: scripts/bootstrap-if-needed.sh
       - save_cache:
-          key: v1-dep-{{ .Branch }}-{{ epoch }}
+          key: v{{ .Environment.CACHE_VERSION }}-{{ .Branch }}-dep-{{ checksum "Cartfile.resolved" }}
           paths:
             - vendor/bundle
             - Carthage
@@ -64,8 +81,19 @@ jobs:
           name: Build Example Project
           command: rake build_example
       - run:
+          name: Install MDSpell
+          command: sudo npm install -g orta/node-markdown-spellcheck
+      - run:
           name: Run Danger
-          command: bundle exec danger
+          command: brew install danger/tap/danger-swift && danger-swift ci
+      - save_cache:
+          key: v{{ .Environment.CACHE_VERSION }}-{{ .Branch }}-dep-{{ checksum "Dangerfile.swift" }}
+          paths:
+            - ~/.danger-swift
+            - /usr/local/Homebrew
+      - run:
+          name: CocoaPods Spec linting
+          command: bundle exec pod lib lint --allow-warnings
       - run:
           name: Send Code Coverage to Codecov.io
           command: bash <(curl -s https://codecov.io/bash) -J Moya
@@ -78,3 +106,9 @@ jobs:
           path: /tmp/circleci-artifacts
       - store_artifacts:
           path: /tmp/circleci-test-results
+workflows:
+  version: 2
+  pr_build:
+    jobs:
+      - build
+      - carthage_without_swiftlint_integration

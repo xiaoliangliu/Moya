@@ -35,13 +35,14 @@ let provider = MoyaProvider<YourAPI>(plugins: [CredentialsPlugin { target -> URL
 Another common method of authentication is by using an access token.
 Moya provides an `AccessTokenPlugin` that supports both `Bearer` authentication
 using a [JWT](https://jwt.io/introduction/) and `Basic` authentication for API keys.
+Also there is support for custom authorization types.
 
 There are two steps required to start using an `AccessTokenPlugin`.
 
 1. You need to add an `AccessTokenPlugin` to your `MoyaProvider` like this:
 ```Swift
 let token = "eyeAm.AJsoN.weBTOKen"
-let authPlugin = AccessTokenPlugin(tokenClosure: token)
+let authPlugin = AccessTokenPlugin { _ in token }
 let provider = MoyaProvider<YourAPI>(plugins: [authPlugin])
 ```
 The `AccessTokenPlugin` initializer accepts a `tokenClosure` that is responsible
@@ -53,16 +54,19 @@ for returning the token to be applied to the header of the request.
 extension YourAPI: TargetType, AccessTokenAuthorizable {
     case targetThatNeedsBearerAuth
     case targetThatNeedsBasicAuth
+    case targetThatNeedsCustomAuth
     case targetDoesNotNeedAuth
 
-    var authorizationType: AuthorizationType {
+    var authorizationType: AuthorizationType? {
         switch self {
             case .targetThatNeedsBearerAuth:
                 return .bearer
             case .targetThatNeedsBasicAuth:
                 return .basic
+            case .targetThatNeedsCustomAuth:
+                return .custom("CustomAuthorizationType")
             case .targetDoesNotNeedAuth:
-                return .none
+                return nil
             }
         }
 }
@@ -84,6 +88,13 @@ Basic requests are authorized by adding a HTTP header of the following form:
 
 ```
 Authorization: Basic <token>
+```
+
+**Custom API Key Auth**
+Custom requests are authorized by adding a HTTP header of the following form:
+
+```
+Authorization: <Custom> <token>
 ```
 
 ## OAuth
